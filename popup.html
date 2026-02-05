@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TURBO LOADER 9000</title>
+  <link rel="stylesheet" href="popup.css">
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Orbitron:wght@400;700;900&family=VT323&family=Russo+One&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="vst-container">
+    <!-- Top Panel with Logo -->
+    <div class="top-panel">
+      <div class="screw screw-tl"></div>
+      <div class="screw screw-tr"></div>
+
+      <div class="logo-section">
+        <div class="brand-badge">SANKDOY</div>
+        <div class="logo-main">
+          <span class="logo-turbo">TURBO</span>
+          <span class="logo-loader">LOADER</span>
+          <span class="logo-9000">9000</span>
+        </div>
+        <div class="logo-subtitle">POLYTRACK MASS IMPORT SYSTEM</div>
+      </div>
+
+      <div class="led-display">
+        <div class="led-screen" id="statusDisplay">
+          <span class="led-text">READY</span>
+        </div>
+        <div class="led-indicators">
+          <div class="led led-green" id="ledReady"></div>
+          <div class="led led-yellow" id="ledProcessing"></div>
+          <div class="led led-red" id="ledError"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Control Panel -->
+    <div class="main-panel">
+      <div class="panel-section file-section">
+        <div class="section-header">
+          <span class="section-icon">&#9658;</span>
+          <span>INPUT MODULE</span>
+        </div>
+
+        <div class="file-drop-zone" id="fileDropZone">
+          <div class="drop-zone-inner">
+            <div class="cassette-icon">
+              <div class="cassette">
+                <div class="cassette-window">
+                  <div class="cassette-reel left-reel"></div>
+                  <div class="cassette-reel right-reel"></div>
+                </div>
+                <div class="cassette-label">DROP .TXT FILE</div>
+              </div>
+            </div>
+            <input type="file" id="fileInput" accept=".txt,.csv" hidden>
+            <button class="retro-button load-button" id="loadFileBtn">
+              <span class="button-text">LOAD TRACKS</span>
+              <span class="button-shine"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="file-info" id="fileInfo">
+          <div class="info-row">
+            <span class="info-label">FILE:</span>
+            <span class="info-value" id="fileName">NO FILE LOADED</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">TRACKS:</span>
+            <span class="info-value" id="trackCount">0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- VU Meter Section -->
+      <div class="panel-section meter-section">
+        <div class="section-header">
+          <span class="section-icon">&#9632;</span>
+          <span>PROGRESS</span>
+        </div>
+
+        <div class="vu-meter">
+          <div class="meter-label">IMPORT LEVEL</div>
+          <div class="meter-bars">
+            <div class="meter-bar" data-level="1"></div>
+            <div class="meter-bar" data-level="2"></div>
+            <div class="meter-bar" data-level="3"></div>
+            <div class="meter-bar" data-level="4"></div>
+            <div class="meter-bar" data-level="5"></div>
+            <div class="meter-bar" data-level="6"></div>
+            <div class="meter-bar" data-level="7"></div>
+            <div class="meter-bar" data-level="8"></div>
+            <div class="meter-bar" data-level="9"></div>
+            <div class="meter-bar hot" data-level="10"></div>
+            <div class="meter-bar hot" data-level="11"></div>
+            <div class="meter-bar hot" data-level="12"></div>
+          </div>
+          <div class="meter-scale">
+            <span>0</span>
+            <span>50</span>
+            <span>100%</span>
+          </div>
+        </div>
+
+        <div class="progress-text">
+          <span id="progressText">0 / 0 TRACKS</span>
+        </div>
+      </div>
+
+      <!-- Collision Mode Selector -->
+      <div class="panel-section collision-section">
+        <div class="section-header">
+          <span class="section-icon">&#9881;</span>
+          <span>COLLISION MODE</span>
+        </div>
+
+        <div class="mode-selector">
+          <div class="mode-knob-container">
+            <div class="mode-labels">
+              <span class="mode-label" data-mode="skip">SKIP</span>
+              <span class="mode-label" data-mode="overwrite">OVER</span>
+              <span class="mode-label" data-mode="rename">RENAME</span>
+            </div>
+            <div class="knob-wrapper">
+              <div class="knob" id="modeKnob" data-mode="skip">
+                <div class="knob-indicator"></div>
+              </div>
+              <div class="knob-shadow"></div>
+            </div>
+          </div>
+          <div class="mode-description" id="modeDescription">
+            Skip existing tracks
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Action Panel -->
+    <div class="action-panel">
+      <div class="screw screw-bl"></div>
+      <div class="screw screw-br"></div>
+
+      <button class="mega-button import-button" id="importBtn" disabled>
+        <div class="button-inner">
+          <span class="mega-icon">&#9889;</span>
+          <span class="mega-text">INJECT TRACKS</span>
+        </div>
+        <div class="button-glow"></div>
+      </button>
+
+      <div class="action-info">
+        <div class="warning-strip">
+          <span>&#9888; REFRESH PAGE AFTER IMPORT &#9888;</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Log Console -->
+    <div class="console-panel">
+      <div class="console-header">
+        <span class="console-title">&#9618; CONSOLE OUTPUT &#9618;</span>
+        <button class="console-clear" id="clearConsole">CLR</button>
+      </div>
+      <div class="console-screen" id="consoleOutput">
+        <div class="console-line">> TURBO LOADER 9000 INITIALIZED</div>
+        <div class="console-line">> WAITING FOR TRACK DATA...</div>
+      </div>
+    </div>
+
+    <!-- Bottom Panel -->
+    <div class="bottom-panel">
+      <div class="credits">
+        <span class="version">v1.0.0</span>
+        <span class="separator">|</span>
+        <span class="author">BY SANKDOY</span>
+      </div>
+
+      <a href="https://buymeacoffee.com/sankdoy" target="_blank" class="coffee-button" id="coffeeBtn">
+        <div class="coffee-cup">
+          <div class="cup-body">
+            <div class="coffee-liquid"></div>
+            <div class="steam steam1"></div>
+            <div class="steam steam2"></div>
+            <div class="steam steam3"></div>
+          </div>
+          <div class="cup-handle"></div>
+        </div>
+        <span class="coffee-text">BUY ME A COFFEE</span>
+      </a>
+
+      <div class="polytrack-badge">
+        <span>FOR</span>
+        <span class="polytrack-name">POLYTRACK</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hidden format help panel -->
+  <div class="format-help" id="formatHelp">
+    <div class="help-header">
+      <span>FILE FORMAT</span>
+      <button class="help-close" id="closeHelp">&times;</button>
+    </div>
+    <div class="help-content">
+      <p>Each line should contain:</p>
+      <code>Track Name | PolyTrack14...</code>
+      <p>Example:</p>
+      <code>My Cool Track | PolyTrack14abc123...</code>
+      <code>Another Track | PolyTrack14xyz789...</code>
+    </div>
+  </div>
+
+  <button class="help-toggle" id="helpToggle">?</button>
+
+  <script src="popup.js"></script>
+</body>
+</html>

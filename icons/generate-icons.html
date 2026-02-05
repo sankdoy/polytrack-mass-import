@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Generate Extension Icons</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      background: #1a1a1a;
+      color: #fff;
+    }
+    .icon-preview {
+      display: inline-block;
+      margin: 10px;
+      text-align: center;
+    }
+    canvas {
+      border: 1px solid #333;
+      background: #fff;
+    }
+    button {
+      display: block;
+      margin: 20px auto;
+      padding: 15px 30px;
+      background: #ff6600;
+      color: #fff;
+      border: none;
+      font-size: 16px;
+      cursor: pointer;
+      border-radius: 5px;
+    }
+    button:hover {
+      background: #ff8833;
+    }
+    h1 {
+      color: #00ffff;
+    }
+    .instructions {
+      background: #2a2a2a;
+      padding: 15px;
+      border-radius: 5px;
+      margin-bottom: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>TURBO LOADER 9000 - Icon Generator</h1>
+
+  <div class="instructions">
+    <p><strong>Instructions:</strong></p>
+    <ol>
+      <li>Click "Generate & Download Icons"</li>
+      <li>Save the downloaded PNG files to the <code>icons/</code> folder</li>
+      <li>Rename them to: icon16.png, icon32.png, icon48.png, icon128.png</li>
+    </ol>
+  </div>
+
+  <div id="previews"></div>
+
+  <button onclick="generateAndDownload()">Generate & Download Icons</button>
+
+  <script>
+    const sizes = [16, 32, 48, 128];
+    const svgCode = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="metalGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#4a4a4a"/>
+      <stop offset="50%" style="stop-color:#2a2a2a"/>
+      <stop offset="100%" style="stop-color:#1a1a1a"/>
+    </linearGradient>
+    <linearGradient id="cyanGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00ffff"/>
+      <stop offset="100%" style="stop-color:#0088ff"/>
+    </linearGradient>
+    <linearGradient id="orangeGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#ff6600"/>
+      <stop offset="100%" style="stop-color:#cc3300"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="16" fill="url(#metalGrad)"/>
+  <rect x="2" y="2" width="124" height="124" rx="14" fill="none" stroke="#555" stroke-width="1"/>
+  <rect x="10" y="10" width="108" height="108" rx="8" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+  <text x="64" y="38" text-anchor="middle" font-family="Arial Black, sans-serif" font-size="18" font-weight="bold" fill="url(#cyanGlow)">TURBO</text>
+  <path d="M58 45 L70 45 L65 58 L78 58 L52 88 L58 70 L45 70 Z" fill="url(#orangeGrad)"/>
+  <text x="64" y="110" text-anchor="middle" font-family="Arial Black, sans-serif" font-size="20" font-weight="bold" fill="#ff00ff">9000</text>
+  <circle cx="18" cy="18" r="4" fill="#333" stroke="#555" stroke-width="1"/>
+  <circle cx="110" cy="18" r="4" fill="#333" stroke="#555" stroke-width="1"/>
+  <circle cx="18" cy="110" r="4" fill="#333" stroke="#555" stroke-width="1"/>
+  <circle cx="110" cy="110" r="4" fill="#333" stroke="#555" stroke-width="1"/>
+  <circle cx="30" cy="50" r="4" fill="#39ff14"/>
+  <circle cx="98" cy="50" r="4" fill="#ff073a"/>
+</svg>`;
+
+    // Create previews
+    const previewsDiv = document.getElementById('previews');
+    sizes.forEach(size => {
+      const div = document.createElement('div');
+      div.className = 'icon-preview';
+      div.innerHTML = `
+        <canvas id="canvas${size}" width="${size}" height="${size}"></canvas>
+        <p>${size}x${size}</p>
+      `;
+      previewsDiv.appendChild(div);
+    });
+
+    // Draw previews on load
+    window.onload = () => {
+      const img = new Image();
+      const svgBlob = new Blob([svgCode], { type: 'image/svg+xml' });
+      const url = URL.createObjectURL(svgBlob);
+
+      img.onload = () => {
+        sizes.forEach(size => {
+          const canvas = document.getElementById(`canvas${size}`);
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, size, size);
+        });
+        URL.revokeObjectURL(url);
+      };
+      img.src = url;
+    };
+
+    function generateAndDownload() {
+      const img = new Image();
+      const svgBlob = new Blob([svgCode], { type: 'image/svg+xml' });
+      const url = URL.createObjectURL(svgBlob);
+
+      img.onload = () => {
+        sizes.forEach(size => {
+          const canvas = document.createElement('canvas');
+          canvas.width = size;
+          canvas.height = size;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, size, size);
+
+          // Download
+          const link = document.createElement('a');
+          link.download = `icon${size}.png`;
+          link.href = canvas.toDataURL('image/png');
+          link.click();
+        });
+        URL.revokeObjectURL(url);
+      };
+      img.src = url;
+    }
+  </script>
+</body>
+</html>
