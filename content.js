@@ -2,8 +2,7 @@
  * TURBO LOADER 9000 - PolyTrack Mass Import Extension
  * content.js - Content script for localStorage injection
  *
- * This script runs in the context of the PolyTrack page and handles
- * importing tracks into localStorage.
+ * Stores tracks in localStorage using PolyTrack's expected format.
  */
 
 // Key prefix used by PolyTrack
@@ -58,8 +57,6 @@ function generateUniqueName(baseName) {
   while (trackExists(newName)) {
     newName = `${baseName} (${counter})`;
     counter++;
-
-    // Safety limit
     if (counter > 1000) {
       throw new Error(`Could not generate unique name for "${baseName}"`);
     }
@@ -78,6 +75,7 @@ function saveTrack(name, data) {
     saveTime: Date.now()
   });
   localStorage.setItem(key, payload);
+  console.log(`[TURBO LOADER] Saved track "${name}" with data starting: ${data.substring(0, 30)}...`);
 }
 
 /**
@@ -91,7 +89,8 @@ async function importTracks(tracks, mode) {
     renamed: 0,
     overwritten: 0,
     total: tracks.length,
-    errors: []
+    errors: [],
+    warnings: []
   };
 
   for (let i = 0; i < tracks.length; i++) {
@@ -105,20 +104,17 @@ async function importTracks(tracks, mode) {
       if (exists) {
         switch (mode) {
           case 'skip':
-            // Skip this track
             results.skipped++;
             status = 'skipped';
             sendProgress(i + 1, tracks.length, track.name, status);
             continue;
 
           case 'overwrite':
-            // Overwrite existing track
             results.overwritten++;
             status = 'overwritten';
             break;
 
           case 'rename':
-            // Generate new name
             finalName = generateUniqueName(track.name);
             results.renamed++;
             status = 'renamed';
@@ -126,21 +122,31 @@ async function importTracks(tracks, mode) {
         }
       }
 
-      // Validate track data
-      if (!track.data || !track.data.startsWith('PolyTrack')) {
-        results.errors.push(`Invalid track data for "${track.name}"`);
+      // Determine what data to store
+      let dataToStore = null;
+
+      if (track.data && track.data.startsWith('PolyTrack')) {
+        // Already in PolyTrack format - store directly
+        dataToStore = track.data;
+      } else if (track.shareCode) {
+        // Share code - store it and let game try to parse
+        // Note: This may not work directly, but we'll try
+        dataToStore = track.shareCode;
+        results.warnings.push(`Track "${finalName}" stored as share code - may need manual re-import`);
+      }
+
+      if (!dataToStore) {
+        results.errors.push(`No valid data for track "${track.name}"`);
         sendProgress(i + 1, tracks.length, track.name, 'error');
         continue;
       }
 
       // Save the track
-      saveTrack(finalName, track.data);
+      saveTrack(finalName, dataToStore);
       results.imported++;
-
-      // Send progress update
       sendProgress(i + 1, tracks.length, finalName, status);
 
-      // Small delay to avoid overwhelming the browser
+      // Small delay between imports
       if (i < tracks.length - 1) {
         await new Promise(resolve => setTimeout(resolve, 50));
       }

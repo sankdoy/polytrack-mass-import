@@ -1,7 +1,249 @@
 /**
  * TURBO LOADER 9000 - PolyTrack Mass Import Extension
  * popup.js - Main popup logic
+ *
+ * PolyTrack uses a custom encoding system:
+ * - 62-character alphabet: A-Za-z0-9
+ * - Variable bit lengths (5 or 6 bits per character)
+ * - Deflate compression for PolyTrack1 format
  */
+
+// ==========================================
+// PolyTrack Custom Encoding (from game bundle)
+// ==========================================
+
+// Forward alphabet: index -> character
+const yA = ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z","a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v","w","x","y","z","0","1","2","3","4","5","6","7","8","9"];
+
+// Reverse lookup: char code -> index (or -1 for invalid)
+const bA = [-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,52,53,54,55,56,57,58,59,60,61,-1,-1,-1,-1,-1,-1,-1,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,-1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51];
+
+/**
+ * EA - Bit packing helper for decoder
+ * Packs bits into a byte array
+ */
+function EA(bytes, bitOffset, numBits, value, isLast) {
+  const byteIndex = Math.floor(bitOffset / 8);
+  while (byteIndex >= bytes.length) bytes.push(0);
+
+  const bitPos = bitOffset - 8 * byteIndex;
+  bytes[byteIndex] |= (value << bitPos) & 255;
+
+  if (bitPos > 8 - numBits && !isLast) {
+    const nextByteIndex = byteIndex + 1;
+    if (nextByteIndex >= bytes.length) bytes.push(0);
+    bytes[nextByteIndex] |= value >> (8 - bitPos);
+  }
+}
+
+/**
+ * kA - Bit reading helper for encoder
+ * Reads bits from a byte array
+ */
+function kA(bytes, bitOffset) {
+  const byteIndex = Math.floor(bitOffset / 8);
+  if (byteIndex >= bytes.length) return 0;
+
+  const bitPos = bitOffset - 8 * byteIndex;
+  let value = bytes[byteIndex] >> bitPos;
+
+  if (byteIndex + 1 < bytes.length && bitPos > 2) {
+    value |= bytes[byteIndex + 1] << (8 - bitPos);
+  }
+
+  return value & 63; // 6 bits max
+}
+
+/**
+ * xA - PolyTrack custom decoder
+ * Decodes the custom 62-char encoding to bytes
+ * Returns Uint8Array or null on error
+ */
+function xA(str) {
+  let bitOffset = 0;
+  const bytes = [];
+  const len = str.length;
+
+  for (let i = 0; i < len; i++) {
+    const charCode = str.charCodeAt(i);
+    if (charCode >= bA.length) return null;
+
+    const value = bA[charCode];
+    if (value === -1) return null;
+
+    const isLast = i === len - 1;
+
+    // Variable bit length: values 0-30 use 6 bits, 31+ use 5 bits
+    if ((30 & ~value) !== 0) {
+      EA(bytes, bitOffset, 6, value, isLast);
+      bitOffset += 6;
+    } else {
+      EA(bytes, bitOffset, 5, value & 31, isLast);
+      bitOffset += 5;
+    }
+  }
+
+  return new Uint8Array(bytes);
+}
+
+/**
+ * AA - PolyTrack custom encoder
+ * Encodes bytes to the custom 62-char format
+ */
+function AA(bytes) {
+  let bitOffset = 0;
+  let result = "";
+  const totalBits = 8 * bytes.length;
+
+  while (bitOffset < totalBits) {
+    const value = kA(bytes, bitOffset);
+    let charIndex;
+
+    // Variable bit length encoding
+    if ((30 & ~value) !== 0) {
+      charIndex = value;
+      bitOffset += 6;
+    } else {
+      charIndex = value & 31;
+      bitOffset += 5;
+    }
+
+    result += yA[charIndex];
+  }
+
+  return result;
+}
+
+/**
+ * wv - Base64URL decoder (for v1n format)
+ * Standard base64url: replace - with +, _ with /, add padding, then atob
+ */
+function wv(str) {
+  let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  // Add padding
+  while (base64.length % 4) base64 += '=';
+  try {
+    const decoded = atob(base64);
+    // Convert to Uint8Array
+    const bytes = new Uint8Array(decoded.length);
+    for (let i = 0; i < decoded.length; i++) {
+      bytes[i] = decoded.charCodeAt(i);
+    }
+    return bytes;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Decode v3 format share code
+ * Format: v3 + [2 chars = name length] + [N chars = name] + [rest = track data]
+ * Example: v3LACl0RgI0TTNF4pdXWm...
+ *   - "v3" prefix
+ *   - "LA" decodes via xA to get name length (e.g., 11)
+ *   - Next ceil(11/3*4)=15 chars encode the name bytes
+ */
+function decodeV3(shareCode) {
+  if (!shareCode.startsWith('v3') || shareCode.startsWith('v2')) return null;
+
+  try {
+    // Get name length from first 2 chars after "v3"
+    const nameLenChars = shareCode.substring(2, 4);
+    const nameLenBytes = xA(nameLenChars);
+    if (!nameLenBytes || nameLenBytes.length === 0) {
+      console.error(`[v3 decode] Failed to decode name length from "${nameLenChars}"`);
+      return null;
+    }
+
+    const nameLen = nameLenBytes[0];
+    console.log(`[v3 decode] Name length: ${nameLen}`);
+
+    // Calculate encoded chars for name: ceil(nameLen / 3 * 4)
+    const nameEncodedLen = Math.ceil(nameLen / 3 * 4);
+    console.log(`[v3 decode] Name encoded length: ${nameEncodedLen}`);
+
+    // Decode name
+    const nameEncodedStr = shareCode.substring(4, 4 + nameEncodedLen);
+    console.log(`[v3 decode] Name encoded string: "${nameEncodedStr}"`);
+
+    const nameBytes = xA(nameEncodedStr);
+    if (!nameBytes) {
+      console.error(`[v3 decode] Failed to decode name bytes`);
+      return null;
+    }
+
+    // UTF-8 decode the name
+    const name = new TextDecoder().decode(nameBytes.slice(0, nameLen));
+    console.log(`[v3 decode] Decoded name: "${name}"`);
+
+    return { name, shareCode };
+  } catch (e) {
+    console.error('v3 decode error:', e);
+    return null;
+  }
+}
+
+/**
+ * Decode v1n format share code
+ * Format: v1n + [2 chars base64url = name length] + [URL-encoded name] + [track data]
+ * Example: v1nEgwhirled%20up%20boxBQAB...
+ *   - "v1n" prefix
+ *   - "Eg" base64 decodes to 18 (length of URL-encoded name)
+ *   - "whirled%20up%20box" (18 chars) URL-decodes to "whirled up box"
+ */
+function decodeV1n(shareCode) {
+  if (!shareCode.startsWith('v1n')) return null;
+
+  try {
+    // Get name length from chars 3-5 (base64url encoded)
+    const nameLenBytes = wv(shareCode.substring(3, 5));
+    if (!nameLenBytes || nameLenBytes.length === 0) return null;
+
+    const nameLen = nameLenBytes[0];
+    console.log(`[v1n decode] Name length: ${nameLen}`);
+
+    // Next nameLen chars are URL-encoded name
+    const encodedName = shareCode.substring(5, 5 + nameLen);
+    console.log(`[v1n decode] Encoded name: "${encodedName}"`);
+
+    const name = decodeURIComponent(encodedName);
+    console.log(`[v1n decode] Decoded name: "${name}"`);
+
+    return { name, shareCode };
+  } catch (e) {
+    console.error('v1n decode error:', e);
+    return null;
+  }
+}
+
+/**
+ * Decode PolyTrack1 format (storage format)
+ * This is double-deflate compressed with embedded name
+ */
+function decodePolyTrack1(data) {
+  if (!data.startsWith('PolyTrack1')) return null;
+
+  // PolyTrack1 format is already in storage format
+  // We can extract the name from it if needed
+  return { name: null, data };
+}
+
+/**
+ * Extract track name from any share code format
+ */
+function extractTrackName(shareCode) {
+  if (shareCode.startsWith('v3') && !shareCode.startsWith('v2')) {
+    const result = decodeV3(shareCode);
+    return result ? result.name : null;
+  }
+
+  if (shareCode.startsWith('v1n')) {
+    const result = decodeV1n(shareCode);
+    return result ? result.name : null;
+  }
+
+  return null;
+}
 
 // State
 let parsedTracks = [];
@@ -149,50 +391,130 @@ function processFile(file) {
   reader.readAsText(file);
 }
 
+/**
+ * Check if a string looks like valid PolyTrack data or a share code
+ */
+function isValidTrackData(data) {
+  if (!data || data.length < 10) return false;
+
+  // Accept multiple formats:
+  // 1. Starts with "PolyTrack" (storage format)
+  // 2. Starts with "v1n", "v3" (share code formats)
+
+  if (data.startsWith('PolyTrack')) return true;
+  if (data.startsWith('v3') && !data.startsWith('v2')) return true;
+  if (data.startsWith('v1n')) return true;
+
+  return false;
+}
+
+/**
+ * Process track data - extract name and prepare for import
+ * Returns { data: string, shareCode: string|null, name: string|null } or null if invalid
+ */
+function processTrackData(rawData) {
+  if (!rawData || rawData.length < 10) return null;
+
+  // Remove whitespace (game does this too)
+  const cleanData = rawData.replace(/\s+/g, '');
+
+  // Already in PolyTrack format - use as-is
+  if (cleanData.startsWith('PolyTrack')) {
+    return { data: cleanData, shareCode: null, name: null };
+  }
+
+  // v3 format share code
+  if (cleanData.startsWith('v3') && !cleanData.startsWith('v2')) {
+    const result = decodeV3(cleanData);
+    if (result) {
+      // Store the share code - we'll try to use game's import
+      return { data: null, shareCode: cleanData, name: result.name };
+    }
+    // Even if name extraction failed, the share code might still be valid
+    return { data: null, shareCode: cleanData, name: null };
+  }
+
+  // v1n format share code
+  if (cleanData.startsWith('v1n')) {
+    const result = decodeV1n(cleanData);
+    if (result) {
+      return { data: null, shareCode: cleanData, name: result.name };
+    }
+    return { data: null, shareCode: cleanData, name: null };
+  }
+
+  return null;
+}
+
 function parseFileContent(content, name) {
   parsedTracks = [];
   const lines = content.split('\n').filter(line => line.trim());
 
   let validCount = 0;
   let invalidCount = 0;
+  let shareCodeCount = 0;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
 
-    // Try to parse as "Track Name | Track Data" format
+    // Skip comment lines
+    if (line.startsWith('#') || line.startsWith('//')) {
+      continue;
+    }
+
+    // Try to parse as "Track Name | Track Data" format first
     const pipeIndex = line.indexOf('|');
 
     if (pipeIndex !== -1) {
       const trackName = line.substring(0, pipeIndex).trim();
-      const trackData = line.substring(pipeIndex + 1).trim();
+      const rawTrackData = line.substring(pipeIndex + 1).trim();
 
-      if (trackName && trackData && trackData.startsWith('PolyTrack')) {
+      if (trackName && isValidTrackData(rawTrackData)) {
+        const processed = processTrackData(rawTrackData);
+        if (processed) {
+          parsedTracks.push({
+            name: trackName,
+            data: processed.data,
+            shareCode: processed.shareCode
+          });
+          validCount++;
+          if (processed.shareCode) shareCodeCount++;
+          log(`LINE ${i + 1}: "${trackName}" (pipe format)`, 'success');
+          continue;
+        }
+      }
+    }
+
+    // No pipe format - check if the whole line is valid track data
+    if (isValidTrackData(line)) {
+      const processed = processTrackData(line);
+
+      if (processed) {
+        // Try to get name from extraction or generate one
+        let trackName = processed.name;
+
+        if (!trackName) {
+          trackName = `Imported Track ${validCount + 1}`;
+          log(`LINE ${i + 1}: Using generated name "${trackName}"`, 'warning');
+        } else {
+          log(`LINE ${i + 1}: "${trackName}" (extracted from share code)`, 'success');
+        }
+
         parsedTracks.push({
           name: trackName,
-          data: trackData
+          data: processed.data,
+          shareCode: processed.shareCode
         });
         validCount++;
+        if (processed.shareCode) shareCodeCount++;
       } else {
         invalidCount++;
-        log(`LINE ${i + 1}: Invalid format - missing name or invalid data`, 'warning');
+        log(`LINE ${i + 1}: Failed to parse track data`, 'error');
       }
     } else {
-      // Maybe it's just track data without a name?
-      // Check if the line starts with PolyTrack
-      if (line.startsWith('PolyTrack')) {
-        // Generate a name
-        const trackName = `Imported Track ${validCount + 1}`;
-        parsedTracks.push({
-          name: trackName,
-          data: line
-        });
-        validCount++;
-        log(`LINE ${i + 1}: No name found, using "${trackName}"`, 'warning');
-      } else {
-        invalidCount++;
-        log(`LINE ${i + 1}: Invalid format - no pipe separator found`, 'warning');
-      }
+      invalidCount++;
+      log(`LINE ${i + 1}: Skipped - not recognized as track data`, 'warning');
     }
   }
 
@@ -205,15 +527,21 @@ function parseFileContent(content, name) {
     setLedState('ready');
     importBtn.disabled = false;
     log(`PARSED ${validCount} TRACKS SUCCESSFULLY`, 'success');
+    if (shareCodeCount > 0) {
+      log(`FOUND ${shareCodeCount} SHARE CODES - Names extracted`, 'success');
+    }
     if (invalidCount > 0) {
-      log(`${invalidCount} LINES SKIPPED (INVALID FORMAT)`, 'warning');
+      log(`${invalidCount} LINES SKIPPED`, 'warning');
     }
   } else {
     setStatus('NO VALID TRACKS');
     setLedState('error');
     importBtn.disabled = true;
     log('ERROR: No valid tracks found in file', 'error');
-    log('FORMAT: Track Name | PolyTrack14...', 'warning');
+    log('Supported formats:', 'warning');
+    log('  - Share codes (v1n..., v3...)', 'warning');
+    log('  - PolyTrack data (PolyTrack1...)', 'warning');
+    log('  - Track Name | ShareCode', 'warning');
   }
 
   updateProgressText(0, validCount);
