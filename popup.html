@@ -52,10 +52,10 @@
                   <div class="cassette-reel left-reel"></div>
                   <div class="cassette-reel right-reel"></div>
                 </div>
-                <div class="cassette-label">DROP .TXT FILE</div>
+                <div class="cassette-label">DROP .TXT FILES</div>
               </div>
             </div>
-            <input type="file" id="fileInput" accept=".txt,.csv" hidden>
+            <input type="file" id="fileInput" accept=".txt,.csv" multiple hidden>
             <button class="retro-button load-button" id="loadFileBtn">
               <span class="button-text">LOAD TRACKS</span>
               <span class="button-shine"></span>
@@ -193,7 +193,7 @@
     <!-- Bottom Panel -->
     <div class="bottom-panel">
       <div class="credits">
-        <span class="version">v1.3.4</span>
+        <span class="version">v1.4.0</span>
         <span class="separator">|</span>
         <span class="author">BY SANKDOY</span>
       </div>
@@ -225,6 +225,7 @@
       <button class="help-close" id="closeHelp">&times;</button>
     </div>
     <div class="help-content">
+      <p><strong>✨ Multi-file support!</strong> Upload multiple .txt files at once!</p>
       <p><strong>Option 1:</strong> Raw track strings (one per line)</p>
       <code>v1nEgTrackName%20Here...</code>
       <code>v3LACsomething...</code>

@@ -342,9 +342,9 @@ function setupEventListeners() {
 
 // File Handling
 function handleFileSelect(event) {
-  const file = event.target.files[0];
-  if (file) {
-    processFile(file);
+  const files = Array.from(event.target.files);
+  if (files.length > 0) {
+    processFiles(files);
   }
 }
 
@@ -365,16 +365,25 @@ function handleDrop(event) {
   event.stopPropagation();
   fileDropZone.classList.remove('dragover');
 
-  const files = event.dataTransfer.files;
+  const files = Array.from(event.dataTransfer.files);
   if (files.length > 0) {
-    const file = files[0];
-    if (file.name.endsWith('.txt') || file.name.endsWith('.csv')) {
-      processFile(file);
-    } else {
+    // Filter for valid file types
+    const validFiles = files.filter(file =>
+      file.name.endsWith('.txt') || file.name.endsWith('.csv')
+    );
+
+    if (validFiles.length === 0) {
       setStatus('INVALID FILE TYPE');
       setLedState('error');
       log('ERROR: Only .txt and .csv files supported', 'error');
+      return;
     }
+
+    if (validFiles.length < files.length) {
+      log(`WARNING: Skipped ${files.length - validFiles.length} invalid file(s)`, 'warning');
+    }
+
+    processFiles(validFiles);
   }
 }
 
@@ -397,6 +406,73 @@ function processFile(file) {
   };
 
   reader.readAsText(file);
+}
+
+/**
+ * Process multiple files and combine all tracks
+ */
+async function processFiles(files) {
+  setStatus('LOADING...');
+  setLedState('processing');
+  log(`LOADING ${files.length} FILE(S)...`);
+
+  parsedTracks = []; // Reset tracks
+  let totalValidTracks = 0;
+  let totalInvalidTracks = 0;
+  const fileNames = [];
+
+  try {
+    // Read all files
+    const fileContents = await Promise.all(
+      files.map(file => {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (e) => resolve({ name: file.name, content: e.target.result });
+          reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
+          reader.readAsText(file);
+        });
+      })
+    );
+
+    // Process each file
+    for (const { name, content } of fileContents) {
+      log(`PROCESSING: ${name}`);
+      const result = parseFileContentMulti(content, name);
+      totalValidTracks += result.validCount;
+      totalInvalidTracks += result.invalidCount;
+      fileNames.push(name);
+    }
+
+    // Update UI
+    if (files.length === 1) {
+      fileName.textContent = fileNames[0];
+    } else {
+      fileName.textContent = `${files.length} files loaded`;
+    }
+    trackCount.textContent = totalValidTracks.toString();
+
+    if (totalValidTracks > 0) {
+      setStatus(`${totalValidTracks} TRACKS READY`);
+      setLedState('ready');
+      importBtn.disabled = false;
+      log(`=== TOTAL: ${totalValidTracks} TRACKS FROM ${files.length} FILE(S) ===`, 'success');
+      if (totalInvalidTracks > 0) {
+        log(`${totalInvalidTracks} LINES SKIPPED ACROSS ALL FILES`, 'warning');
+      }
+    } else {
+      setStatus('NO VALID TRACKS');
+      setLedState('error');
+      importBtn.disabled = true;
+      log('ERROR: No valid tracks found in any file', 'error');
+    }
+
+    updateProgressText(0, totalValidTracks);
+
+  } catch (error) {
+    setStatus('READ ERROR');
+    setLedState('error');
+    log(`ERROR: ${error.message}`, 'error');
+  }
 }
 
 /**
@@ -454,8 +530,10 @@ function processTrackData(rawData) {
   return null;
 }
 
-function parseFileContent(content, name) {
-  parsedTracks = [];
+/**
+ * Parse file content and return counts (for multi-file processing)
+ */
+function parseFileContentMulti(content, name) {
   const lines = content.split('\n').filter(line => line.trim());
 
   let validCount = 0;
@@ -525,6 +603,17 @@ function parseFileContent(content, name) {
       log(`LINE ${i + 1}: Skipped - not recognized as track data`, 'warning');
     }
   }
+
+  return { validCount, invalidCount, shareCodeCount };
+}
+
+/**
+ * Parse file content (single file - legacy function)
+ */
+function parseFileContent(content, name) {
+  parsedTracks = [];
+  const result = parseFileContentMulti(content, name);
+  const { validCount, invalidCount, shareCodeCount } = result;
 
   // Update UI
   fileName.textContent = name;
