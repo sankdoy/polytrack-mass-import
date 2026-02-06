@@ -269,6 +269,8 @@ const progressText = document.getElementById('progressText');
 const helpToggle = document.getElementById('helpToggle');
 const formatHelp = document.getElementById('formatHelp');
 const closeHelp = document.getElementById('closeHelp');
+const exportBtn = document.getElementById('exportBtn');
+const deleteAllBtn = document.getElementById('deleteAllBtn');
 
 // Mode descriptions
 const modeDescriptions = {
@@ -330,6 +332,12 @@ function setupEventListeners() {
   closeHelp.addEventListener('click', () => {
     formatHelp.classList.remove('visible');
   });
+
+  // Export all tracks
+  exportBtn.addEventListener('click', exportAllTracks);
+
+  // Delete all tracks
+  deleteAllBtn.addEventListener('click', deleteAllTracksWithConfirm);
 }
 
 // File Handling
@@ -642,7 +650,7 @@ function handleImportSuccess(response) {
   isImporting = false;
   importBtn.disabled = false;
 
-  const { imported, skipped, renamed, overwritten, total } = response;
+  const { imported, skipped, renamed, overwritten, total, failedTracks } = response;
 
   setStatus('IMPORT COMPLETE!');
   setLedState('ready');
@@ -659,6 +667,14 @@ function handleImportSuccess(response) {
   if (skipped > 0) log(`SKIPPED: ${skipped}`, 'warning');
   if (renamed > 0) log(`RENAMED: ${renamed}`);
   if (overwritten > 0) log(`OVERWRITTEN: ${overwritten}`);
+
+  // Download failed tracks log if there are any
+  if (failedTracks && failedTracks.length > 0) {
+    log(`FAILED: ${failedTracks.length}`, 'error');
+    log('Downloading failed tracks log...', 'warning');
+    downloadFailedTracksLog(failedTracks);
+  }
+
   log('REFRESH PAGE TO SEE TRACKS', 'warning');
 }
 
@@ -737,6 +753,154 @@ chrome.runtime.onMessage.addListener((message) => {
       log(`RENAMED: ${trackName}`);
     } else if (status === 'overwritten') {
       log(`OVERWRITTEN: ${trackName}`);
+    } else if (status === 'error') {
+      log(`FAILED: ${trackName}`, 'error');
     }
   }
 });
+
+/**
+ * Download failed tracks log file
+ */
+function downloadFailedTracksLog(failedTracks) {
+  let content = `# PolyTrack Failed Tracks Log - ${new Date().toLocaleString()}\n`;
+  content += `# Total Failed: ${failedTracks.length}\n`;
+  content += `# These tracks could not be imported due to decode/encode errors\n\n`;
+
+  failedTracks.forEach((track, index) => {
+    content += `## Track ${index + 1}: ${track.name}\n`;
+    content += `Reason: ${track.reason}\n`;
+    content += `Data: ${track.data}\n\n`;
+  });
+
+  const blob = new Blob([content], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+  const filename = `polytrack_failed_tracks_${timestamp}.txt`;
+
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  log(`Downloaded: ${filename}`, 'success');
+}
+
+/**
+ * Export all tracks from PolyTrack
+ */
+async function exportAllTracks() {
+  setStatus('EXPORTING...');
+  setLedState('processing');
+  log('EXPORTING ALL TRACKS...');
+
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = tabs[0];
+
+    if (!tab) {
+      log('ERROR: No active tab found', 'error');
+      setStatus('EXPORT FAILED');
+      setLedState('error');
+      return;
+    }
+
+    if (!tab.url.includes('kodub.com')) {
+      log('ERROR: Please navigate to PolyTrack first', 'error');
+      setStatus('EXPORT FAILED');
+      setLedState('error');
+      return;
+    }
+
+    const response = await chrome.tabs.sendMessage(tab.id, {
+      action: 'exportAllTracks'
+    });
+
+    if (response && response.success) {
+      setStatus('EXPORT COMPLETE!');
+      setLedState('ready');
+      log(`EXPORTED ${response.count} TRACKS`, 'success');
+      log(`File: ${response.filename}`, 'success');
+
+      document.querySelector('.vst-container').classList.add('success-flash');
+      setTimeout(() => {
+        document.querySelector('.vst-container').classList.remove('success-flash');
+      }, 500);
+    } else {
+      setStatus('EXPORT FAILED');
+      setLedState('error');
+      log(`ERROR: ${response?.error || 'Export failed'}`, 'error');
+    }
+  } catch (error) {
+    setStatus('EXPORT FAILED');
+    setLedState('error');
+    log(`ERROR: ${error.message}`, 'error');
+  }
+}
+
+/**
+ * Delete all tracks with confirmation
+ */
+async function deleteAllTracksWithConfirm() {
+  const confirmed = confirm(
+    '⚠️ WARNING ⚠️\n\n' +
+    'This will DELETE ALL imported tracks from PolyTrack!\n\n' +
+    'This action CANNOT be undone!\n\n' +
+    'Are you sure you want to continue?'
+  );
+
+  if (!confirmed) {
+    log('DELETE CANCELLED', 'warning');
+    return;
+  }
+
+  setStatus('DELETING...');
+  setLedState('processing');
+  log('DELETING ALL TRACKS...');
+
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = tabs[0];
+
+    if (!tab) {
+      log('ERROR: No active tab found', 'error');
+      setStatus('DELETE FAILED');
+      setLedState('error');
+      return;
+    }
+
+    if (!tab.url.includes('kodub.com')) {
+      log('ERROR: Please navigate to PolyTrack first', 'error');
+      setStatus('DELETE FAILED');
+      setLedState('error');
+      return;
+    }
+
+    const response = await chrome.tabs.sendMessage(tab.id, {
+      action: 'deleteAllTracks'
+    });
+
+    if (response && response.success) {
+      setStatus('DELETE COMPLETE!');
+      setLedState('ready');
+      log(`DELETED ${response.count} TRACKS`, 'success');
+      log('REFRESH PAGE TO SEE CHANGES', 'warning');
+
+      document.querySelector('.vst-container').classList.add('success-flash');
+      setTimeout(() => {
+        document.querySelector('.vst-container').classList.remove('success-flash');
+      }, 500);
+    } else {
+      setStatus('DELETE FAILED');
+      setLedState('error');
+      log(`ERROR: ${response?.error || 'Delete failed'}`, 'error');
+    }
+  } catch (error) {
+    setStatus('DELETE FAILED');
+    setLedState('error');
+    log(`ERROR: ${error.message}`, 'error');
+  }
+}

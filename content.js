@@ -22,6 +22,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ tracks });
     return true;
   }
+
+  if (message.action === 'exportAllTracks') {
+    exportAllTracks()
+      .then(result => sendResponse(result))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (message.action === 'deleteAllTracks') {
+    deleteAllTracks()
+      .then(result => sendResponse(result))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
 });
 
 /**
@@ -90,7 +104,8 @@ async function importTracks(tracks, mode) {
     overwritten: 0,
     total: tracks.length,
     errors: [],
-    warnings: []
+    warnings: [],
+    failedTracks: []
   };
 
   for (let i = 0; i < tracks.length; i++) {
@@ -136,7 +151,13 @@ async function importTracks(tracks, mode) {
       }
 
       if (!dataToStore) {
-        results.errors.push(`No valid data for track "${track.name}"`);
+        const errorMsg = `No valid data for track "${track.name}"`;
+        results.errors.push(errorMsg);
+        results.failedTracks.push({
+          name: track.name,
+          data: track.shareCode || track.data || '',
+          reason: 'Failed to decode/encode track data'
+        });
         sendProgress(i + 1, tracks.length, track.name, 'error');
         continue;
       }
@@ -152,7 +173,13 @@ async function importTracks(tracks, mode) {
       }
 
     } catch (error) {
-      results.errors.push(`Error importing "${track.name}": ${error.message}`);
+      const errorMsg = `Error importing "${track.name}": ${error.message}`;
+      results.errors.push(errorMsg);
+      results.failedTracks.push({
+        name: track.name,
+        data: track.shareCode || track.data || '',
+        reason: error.message
+      });
       sendProgress(i + 1, tracks.length, track.name, 'error');
     }
   }
@@ -173,6 +200,106 @@ function sendProgress(current, total, trackName, status) {
   }).catch(() => {
     // Popup might be closed, ignore error
   });
+}
+
+/**
+ * Export all tracks to a downloadable text file
+ */
+async function exportAllTracks() {
+  try {
+    const tracks = [];
+
+    // Get all tracks from localStorage
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(TRACK_KEY_PREFIX)) {
+        const trackName = key.replace(TRACK_KEY_PREFIX, '');
+        const trackDataJSON = localStorage.getItem(key);
+
+        if (trackDataJSON) {
+          try {
+            const parsed = JSON.parse(trackDataJSON);
+            tracks.push({
+              name: trackName,
+              data: parsed.data,
+              saveTime: parsed.saveTime
+            });
+          } catch (e) {
+            console.error(`Failed to parse track "${trackName}":`, e);
+          }
+        }
+      }
+    }
+
+    if (tracks.length === 0) {
+      return { success: false, error: 'No tracks found to export' };
+    }
+
+    // Create file content in the format: Track Name | Track Data
+    let fileContent = `# PolyTrack Exported Tracks - ${new Date().toLocaleString()}\n`;
+    fileContent += `# Total Tracks: ${tracks.length}\n\n`;
+
+    tracks.forEach(track => {
+      fileContent += `${track.name} | ${track.data}\n`;
+    });
+
+    // Create and download the file
+    const blob = new Blob([fileContent], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    const filename = `polytrack_export_${timestamp}.txt`;
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    return {
+      success: true,
+      count: tracks.length,
+      filename: filename
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Delete all imported tracks from localStorage
+ */
+async function deleteAllTracks() {
+  try {
+    const tracksToDelete = [];
+
+    // Collect all track keys
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(TRACK_KEY_PREFIX)) {
+        tracksToDelete.push(key);
+      }
+    }
+
+    if (tracksToDelete.length === 0) {
+      return { success: false, error: 'No tracks found to delete' };
+    }
+
+    // Delete all tracks
+    tracksToDelete.forEach(key => {
+      localStorage.removeItem(key);
+    });
+
+    console.log(`[TURBO LOADER] Deleted ${tracksToDelete.length} tracks`);
+
+    return {
+      success: true,
+      count: tracksToDelete.length
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 }
 
 // Log that content script is loaded
