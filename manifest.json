@@ -5,8 +5,7 @@
   "description": "Mass import tracks into PolyTrack from text files. The most EXTREME track loader ever created.",
   "permissions": [
     "activeTab",
-    "scripting",
-    "storage"
+    "scripting"
   ],
   "host_permissions": [
     "https://www.kodub.com/*",
