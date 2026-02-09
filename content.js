@@ -5,11 +5,21 @@
  * Stores tracks in localStorage using PolyTrack's expected format.
  */
 
+// Only operate inside the game's iframe (app-polytrack.kodub.com)
+// The top-level www.kodub.com has its own separate localStorage - we don't want that one
+const IS_GAME_FRAME = window.location.hostname === 'app-polytrack.kodub.com';
+
+if (!IS_GAME_FRAME) {
+  console.log('[TURBO LOADER 9000] Skipping - not the game frame:', window.location.href);
+}
+
 // Key prefix used by PolyTrack
 const TRACK_KEY_PREFIX = 'polytrack_v4_prod_track_';
 
 // Listen for messages from the popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Ignore messages if we're not in the game iframe
+  if (!IS_GAME_FRAME) return false;
   if (message.action === 'importTracks') {
     importTracks(message.tracks, message.mode)
       .then(result => sendResponse(result))
