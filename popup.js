@@ -217,14 +217,14 @@ function decodeV1n(shareCode) {
 }
 
 /**
- * Decode PolyTrack1 format (storage format)
- * This is double-deflate compressed with embedded name
+ * Decode PolyTrack storage formats (PolyTrack1, PolyTrack24pdr, etc.)
+ * These are storage formats that can be saved directly to localStorage.
+ * Name cannot be extracted without game-internal decoding.
  */
-function decodePolyTrack1(data) {
-  if (!data.startsWith('PolyTrack1')) return null;
+function decodePolyTrackStorage(data) {
+  if (!data.startsWith('PolyTrack')) return null;
 
-  // PolyTrack1 format is already in storage format
-  // We can extract the name from it if needed
+  // All PolyTrack* storage formats are stored as-is
   return { name: null, data };
 }
 
@@ -249,6 +249,7 @@ function extractTrackName(shareCode) {
 let parsedTracks = [];
 let collisionMode = 'skip'; // skip, overwrite, rename
 let isImporting = false;
+let legacyMode = false;
 
 // DOM Elements
 const fileInput = document.getElementById('fileInput');
@@ -271,6 +272,7 @@ const formatHelp = document.getElementById('formatHelp');
 const closeHelp = document.getElementById('closeHelp');
 const exportBtn = document.getElementById('exportBtn');
 const deleteAllBtn = document.getElementById('deleteAllBtn');
+const legacyModeBtn = document.getElementById('legacyModeBtn');
 
 // Mode descriptions
 const modeDescriptions = {
@@ -338,6 +340,9 @@ function setupEventListeners() {
 
   // Delete all tracks
   deleteAllBtn.addEventListener('click', deleteAllTracksWithConfirm);
+
+  // Legacy mode toggle
+  legacyModeBtn.addEventListener('click', toggleLegacyMode);
 }
 
 // File Handling
@@ -482,7 +487,7 @@ function isValidTrackData(data) {
   if (!data || data.length < 10) return false;
 
   // Accept multiple formats:
-  // 1. Starts with "PolyTrack" (storage format)
+  // 1. Starts with "PolyTrack" (storage formats: PolyTrack1, PolyTrack24pdr, etc.)
   // 2. Starts with "v1n", "v3" (share code formats)
 
   if (data.startsWith('PolyTrack')) return true;
@@ -637,8 +642,8 @@ function parseFileContent(content, name) {
     log('ERROR: No valid tracks found in file', 'error');
     log('Supported formats:', 'warning');
     log('  - Share codes (v1n..., v3...)', 'warning');
-    log('  - PolyTrack data (PolyTrack1...)', 'warning');
-    log('  - Track Name | ShareCode', 'warning');
+    log('  - PolyTrack data (PolyTrack1..., PolyTrack24pdr...)', 'warning');
+    log('  - Track Name | TrackData', 'warning');
   }
 
   updateProgressText(0, validCount);
@@ -664,6 +669,40 @@ function updateModeLabel(activeMode) {
   document.querySelectorAll('.mode-label').forEach(label => {
     label.classList.toggle('active', label.dataset.mode === activeMode);
   });
+}
+
+// Legacy Mode
+function toggleLegacyMode() {
+  legacyMode = !legacyMode;
+  legacyModeBtn.classList.toggle('active', legacyMode);
+  legacyModeBtn.querySelector('.utility-text').textContent = legacyMode ? 'LEGACY: ON' : 'LEGACY: OFF';
+  log(legacyMode
+    ? 'LEGACY MODE ON - New formats will be converted to PolyTrack1'
+    : 'LEGACY MODE OFF - Tracks stored in original format',
+    legacyMode ? 'warning' : 'default'
+  );
+}
+
+/**
+ * Convert a newer PolyTrack storage format (e.g. PolyTrack24pdr) to PolyTrack1
+ * for compatibility with older game versions.
+ *
+ * Heuristic: the version tag after 'PolyTrack' is all lowercase letters and digits
+ * (e.g. '24pdr'). The encoded body starts at the first uppercase letter.
+ * Replacing the version tag with '1' produces a PolyTrack1-prefixed string.
+ *
+ * Returns the converted string, or null if input is already PolyTrack1 / not convertible.
+ */
+function convertToPolyTrack1(data) {
+  if (!data || !data.startsWith('PolyTrack')) return null;
+  if (data.startsWith('PolyTrack1')) return null;
+
+  const rest = data.substring(9); // everything after 'PolyTrack'
+  // Body starts at the first uppercase letter; version tag is all lowercase+digits before it
+  const bodyStart = rest.search(/[A-Z]/);
+  if (bodyStart <= 0) return null;
+
+  return 'PolyTrack1' + rest.substring(bodyStart);
 }
 
 // Import Logic
@@ -692,11 +731,30 @@ async function startImport() {
     return;
   }
 
+  // Apply legacy conversion if enabled
+  let tracksToImport = parsedTracks;
+  if (legacyMode) {
+    let convertedCount = 0;
+    tracksToImport = parsedTracks.map(track => {
+      if (track.data && track.data.startsWith('PolyTrack') && !track.data.startsWith('PolyTrack1')) {
+        const converted = convertToPolyTrack1(track.data);
+        if (converted) {
+          convertedCount++;
+          return { ...track, data: converted };
+        }
+      }
+      return track;
+    });
+    if (convertedCount > 0) {
+      log(`LEGACY CONVERT: ${convertedCount} track(s) → PolyTrack1 format`, 'warning');
+    }
+  }
+
   // Send tracks to content script
   try {
     const response = await chrome.tabs.sendMessage(tab.id, {
       action: 'importTracks',
-      tracks: parsedTracks,
+      tracks: tracksToImport,
       mode: collisionMode
     });
 
@@ -720,7 +778,7 @@ async function startImport() {
 
       const response = await chrome.tabs.sendMessage(tab.id, {
         action: 'importTracks',
-        tracks: parsedTracks,
+        tracks: tracksToImport,
         mode: collisionMode
       });
 

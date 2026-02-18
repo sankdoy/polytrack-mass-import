@@ -928,6 +928,31 @@ body {
   color: var(--neon-red);
 }
 
+.legacy-button {
+  grid-column: 1 / -1;
+}
+
+.legacy-button .utility-icon {
+  color: var(--metal-highlight);
+}
+
+.legacy-button.active {
+  background: linear-gradient(180deg, #3a4a6a 0%, #263350 50%, #1e2a40 100%);
+  border-color: var(--neon-cyan);
+  box-shadow:
+    0 4px 0 #0a0a0a,
+    inset 0 1px 0 rgba(0, 255, 255, 0.2),
+    0 0 8px rgba(0, 255, 255, 0.3);
+}
+
+.legacy-button.active .utility-icon {
+  color: var(--neon-cyan);
+}
+
+.legacy-button.active .utility-text {
+  color: var(--neon-cyan);
+}
+
 /* ============================================
    CONSOLE PANEL
    ============================================ */
