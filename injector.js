@@ -9,8 +9,92 @@
 (function() {
   'use strict';
 
-  // Key prefix used by PolyTrack
-  const TRACK_KEY_PREFIX = 'polytrack_v4_prod_track_';
+  function detectTrackStorageConfig() {
+    const fallbackVersion = 4;
+    const trackPrefixCounts = new Map(); // prefix -> count
+    const prodVersions = new Set();
+
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+
+      const prodMatch = key.match(/^polytrack_v(\d+)_prod_/);
+      if (prodMatch) {
+        prodVersions.add(Number(prodMatch[1]));
+      }
+
+      const trackMatch = key.match(/^(polytrack_v\d+_prod_track_)/);
+      if (trackMatch) {
+        const prefix = trackMatch[1];
+        trackPrefixCounts.set(prefix, (trackPrefixCounts.get(prefix) || 0) + 1);
+      }
+    }
+
+    let trackKeyPrefix = null;
+    if (trackPrefixCounts.size > 0) {
+      const sorted = [...trackPrefixCounts.entries()].sort((a, b) => b[1] - a[1]);
+      trackKeyPrefix = sorted[0][0];
+    } else {
+      const inferredVersion = prodVersions.size > 0 ? Math.max(...prodVersions) : fallbackVersion;
+      trackKeyPrefix = `polytrack_v${inferredVersion}_prod_track_`;
+    }
+
+    let encodeName = name => name;
+    let decodeName = name => name;
+    let payloadMode = 'json'; // 'json' | 'raw'
+    let payloadTemplate = null;
+
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(trackKeyPrefix)) continue;
+
+      const suffix = key.substring(trackKeyPrefix.length);
+
+      try {
+        const decoded = decodeURIComponent(suffix);
+        if (decoded !== suffix) {
+          encodeName = name => encodeURIComponent(name);
+          decodeName = name => decodeURIComponent(name);
+        }
+      } catch {
+        // ignore
+      }
+
+      const rawValue = localStorage.getItem(key);
+      if (typeof rawValue === 'string') {
+        try {
+          const parsed = JSON.parse(rawValue);
+          if (parsed && typeof parsed === 'object' && 'data' in parsed) {
+            payloadMode = 'json';
+            payloadTemplate = parsed;
+          } else {
+            payloadMode = 'raw';
+          }
+        } catch {
+          payloadMode = 'raw';
+        }
+      }
+
+      break;
+    }
+
+    return {
+      trackKeyPrefix,
+      encodeName,
+      decodeName,
+      payloadMode,
+      payloadTemplate
+    };
+  }
+
+  const TRACK_STORAGE = detectTrackStorageConfig();
+  const TRACK_KEY_PREFIX = TRACK_STORAGE.trackKeyPrefix;
+
+  console.log('[TURBO LOADER 9000] Injector track storage config:', {
+    prefix: TRACK_KEY_PREFIX,
+    payloadMode: TRACK_STORAGE.payloadMode,
+    hasTemplate: Boolean(TRACK_STORAGE.payloadTemplate)
+  });
 
   // Listen for messages from the content script
   window.addEventListener('message', (event) => {
@@ -41,7 +125,7 @@
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (key && key.startsWith(TRACK_KEY_PREFIX)) {
-        const trackName = key.replace(TRACK_KEY_PREFIX, '');
+        const trackName = TRACK_STORAGE.decodeName(key.replace(TRACK_KEY_PREFIX, ''));
         tracks.push(trackName);
       }
     }
@@ -49,7 +133,7 @@
   }
 
   function trackExists(name) {
-    const key = `${TRACK_KEY_PREFIX}${name}`;
+    const key = `${TRACK_KEY_PREFIX}${TRACK_STORAGE.encodeName(name)}`;
     return localStorage.getItem(key) !== null;
   }
 
@@ -67,12 +151,22 @@
   }
 
   function saveTrack(name, data) {
-    const key = `${TRACK_KEY_PREFIX}${name}`;
-    const payload = JSON.stringify({
-      data: data,
-      saveTime: Date.now()
-    });
-    localStorage.setItem(key, payload);
+    const key = `${TRACK_KEY_PREFIX}${TRACK_STORAGE.encodeName(name)}`;
+
+    if (TRACK_STORAGE.payloadMode === 'raw') {
+      localStorage.setItem(key, data);
+      return;
+    }
+
+    const template = TRACK_STORAGE.payloadTemplate && typeof TRACK_STORAGE.payloadTemplate === 'object'
+      ? { ...TRACK_STORAGE.payloadTemplate }
+      : {};
+
+    template.data = data;
+    template.saveTime = Date.now();
+    template.timestamp = template.saveTime;
+
+    localStorage.setItem(key, JSON.stringify(template));
   }
 
   function importTracks(tracks, mode) {

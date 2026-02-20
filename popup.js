@@ -684,25 +684,31 @@ function toggleLegacyMode() {
 }
 
 /**
- * Convert a newer PolyTrack storage format (e.g. PolyTrack24pdr) to PolyTrack1
- * for compatibility with older game versions.
+ * Downgrade a newer PolyTrack storage format to PolyTrack1 for older game versions.
  *
- * Heuristic: the version tag after 'PolyTrack' is all lowercase letters and digits
- * (e.g. '24pdr'). The encoded body starts at the first uppercase letter.
- * Replacing the version tag with '1' produces a PolyTrack1-prefixed string.
+ * Storage format layout (chars are 0-indexed):
+ *   [0..8]  = "PolyTrack"   (9 chars, fixed)
+ *   [9]     = version digit  (e.g. '1' = old, '2' = new)
+ *   [10..]  = encoded body   (UNCHANGED — do NOT treat as a version tag)
  *
- * Returns the converted string, or null if input is already PolyTrack1 / not convertible.
+ * Example: "PolyTrack24pdtW…"
+ *   index 9  → '2'  (version)
+ *   index 10 → '4'  (start of payload — '4pdt…' is encoded zlib, not a tag)
+ *   result   → "PolyTrack14pdtW…"
+ *
+ * Rule: swap index 9 from '2' → '1', keep everything from index 10 unchanged.
+ * Returns null if already PolyTrack1 or format is unrecognised.
  */
 function convertToPolyTrack1(data) {
   if (!data || !data.startsWith('PolyTrack')) return null;
-  if (data.startsWith('PolyTrack1')) return null;
+  if (data.startsWith('PolyTrack1')) return null; // already v1
 
-  const rest = data.substring(9); // everything after 'PolyTrack'
-  // Body starts at the first uppercase letter; version tag is all lowercase+digits before it
-  const bodyStart = rest.search(/[A-Z]/);
-  if (bodyStart <= 0) return null;
+  if (data.length < 10) return null;
+  const versionChar = data[9];
+  if (!/[0-9]/.test(versionChar)) return null;
 
-  return 'PolyTrack1' + rest.substring(bodyStart);
+  // Only the version digit at index 9 changes; payload [10..] is untouched.
+  return 'PolyTrack1' + data.substring(10);
 }
 
 // Import Logic

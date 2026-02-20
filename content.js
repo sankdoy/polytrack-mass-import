@@ -5,16 +5,116 @@
  * Stores tracks in localStorage using PolyTrack's expected format.
  */
 
-// Only operate inside the game's iframe (app-polytrack.kodub.com)
-// The top-level www.kodub.com has its own separate localStorage - we don't want that one
-const IS_GAME_FRAME = window.location.hostname === 'app-polytrack.kodub.com';
+function isLikelyPolyTrackStorageContext() {
+  // Prefer the known iframe hostname when present.
+  if (window.location.hostname === 'app-polytrack.kodub.com') return true;
 
-if (!IS_GAME_FRAME) {
-  console.log('[TURBO LOADER 9000] Skipping - not the game frame:', window.location.href);
+  // Fallback: detect PolyTrack prod storage keys (covers cases where the game moves origins).
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && /^polytrack_v\d+_prod_/.test(key)) return true;
+  }
+
+  return false;
 }
 
-// Key prefix used by PolyTrack
-const TRACK_KEY_PREFIX = 'polytrack_v4_prod_track_';
+// Only operate where the game's storage lives.
+// Historically this is the game's iframe (app-polytrack.kodub.com); the top-level www.kodub.com has separate storage.
+const IS_GAME_FRAME = isLikelyPolyTrackStorageContext();
+
+if (!IS_GAME_FRAME) {
+  console.log('[TURBO LOADER 9000] Skipping - not the PolyTrack storage context:', window.location.href);
+}
+
+function detectTrackStorageConfig() {
+  const fallbackVersion = 4;
+  const trackPrefixCounts = new Map(); // prefix -> count
+  const prodVersions = new Set();
+
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key) continue;
+
+    const prodMatch = key.match(/^polytrack_v(\d+)_prod_/);
+    if (prodMatch) {
+      prodVersions.add(Number(prodMatch[1]));
+    }
+
+    const trackMatch = key.match(/^(polytrack_v\d+_prod_track_)/);
+    if (trackMatch) {
+      const prefix = trackMatch[1];
+      trackPrefixCounts.set(prefix, (trackPrefixCounts.get(prefix) || 0) + 1);
+    }
+  }
+
+  // Prefer the most common observed track prefix.
+  let trackKeyPrefix = null;
+  if (trackPrefixCounts.size > 0) {
+    const sorted = [...trackPrefixCounts.entries()].sort((a, b) => b[1] - a[1]);
+    trackKeyPrefix = sorted[0][0];
+  } else {
+    // Otherwise, infer from any observed polytrack_v{N}_prod_* keys.
+    const inferredVersion = prodVersions.size > 0 ? Math.max(...prodVersions) : fallbackVersion;
+    trackKeyPrefix = `polytrack_v${inferredVersion}_prod_track_`;
+  }
+
+  // Detect name encoding + payload shape from an existing track entry if available.
+  let encodeName = name => name;
+  let decodeName = name => name;
+  let payloadMode = 'json'; // 'json' | 'raw'
+  let payloadTemplate = null;
+
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith(trackKeyPrefix)) continue;
+
+    const suffix = key.substring(trackKeyPrefix.length);
+
+    try {
+      const decoded = decodeURIComponent(suffix);
+      if (decoded !== suffix) {
+        encodeName = name => encodeURIComponent(name);
+        decodeName = name => decodeURIComponent(name);
+      }
+    } catch {
+      // If decoding fails, treat suffix as raw.
+    }
+
+    const rawValue = localStorage.getItem(key);
+    if (typeof rawValue === 'string') {
+      try {
+        const parsed = JSON.parse(rawValue);
+        if (parsed && typeof parsed === 'object' && 'data' in parsed) {
+          payloadMode = 'json';
+          payloadTemplate = parsed;
+        } else {
+          payloadMode = 'raw';
+        }
+      } catch {
+        payloadMode = 'raw';
+      }
+    }
+
+    break;
+  }
+
+  return {
+    trackKeyPrefix,
+    encodeName,
+    decodeName,
+    payloadMode,
+    payloadTemplate
+  };
+}
+
+const TRACK_STORAGE = detectTrackStorageConfig();
+const TRACK_KEY_PREFIX = TRACK_STORAGE.trackKeyPrefix;
+
+console.log('[TURBO LOADER 9000] Track storage config:', {
+  prefix: TRACK_KEY_PREFIX,
+  payloadMode: TRACK_STORAGE.payloadMode,
+  hasTemplate: Boolean(TRACK_STORAGE.payloadTemplate)
+});
 
 // Listen for messages from the popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -56,7 +156,7 @@ function getExistingTracks() {
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
     if (key && key.startsWith(TRACK_KEY_PREFIX)) {
-      const trackName = key.replace(TRACK_KEY_PREFIX, '');
+      const trackName = TRACK_STORAGE.decodeName(key.replace(TRACK_KEY_PREFIX, ''));
       tracks.push(trackName);
     }
   }
@@ -67,7 +167,7 @@ function getExistingTracks() {
  * Check if a track name already exists
  */
 function trackExists(name) {
-  const key = `${TRACK_KEY_PREFIX}${name}`;
+  const key = `${TRACK_KEY_PREFIX}${TRACK_STORAGE.encodeName(name)}`;
   return localStorage.getItem(key) !== null;
 }
 
@@ -93,12 +193,24 @@ function generateUniqueName(baseName) {
  * Save a single track to localStorage
  */
 function saveTrack(name, data) {
-  const key = `${TRACK_KEY_PREFIX}${name}`;
-  const payload = JSON.stringify({
-    data: data,
-    saveTime: Date.now()
-  });
-  localStorage.setItem(key, payload);
+  const key = `${TRACK_KEY_PREFIX}${TRACK_STORAGE.encodeName(name)}`;
+
+  if (TRACK_STORAGE.payloadMode === 'raw') {
+    localStorage.setItem(key, data);
+    console.log(`[TURBO LOADER] Saved track (raw) "${name}" with data starting: ${data.substring(0, 30)}...`);
+    return;
+  }
+
+  const template = TRACK_STORAGE.payloadTemplate && typeof TRACK_STORAGE.payloadTemplate === 'object'
+    ? { ...TRACK_STORAGE.payloadTemplate }
+    : {};
+
+  template.data = data;
+  template.saveTime = Date.now();
+  // Some builds may use different timestamp keys; harmless if unused.
+  template.timestamp = template.saveTime;
+
+  localStorage.setItem(key, JSON.stringify(template));
   console.log(`[TURBO LOADER] Saved track "${name}" with data starting: ${data.substring(0, 30)}...`);
 }
 
@@ -230,12 +342,17 @@ async function exportAllTracks() {
           try {
             const parsed = JSON.parse(trackDataJSON);
             tracks.push({
-              name: trackName,
+              name: TRACK_STORAGE.decodeName(trackName),
               data: parsed.data,
               saveTime: parsed.saveTime
             });
-          } catch (e) {
-            console.error(`Failed to parse track "${trackName}":`, e);
+          } catch {
+            // Some versions may store raw data directly.
+            tracks.push({
+              name: TRACK_STORAGE.decodeName(trackName),
+              data: trackDataJSON,
+              saveTime: null
+            });
           }
         }
       }
